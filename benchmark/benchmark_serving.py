@@ -165,7 +165,8 @@ def calculate_throughput(queries,
                          all_decode_token_latencies,
                          all_request_lens,
                          log_latencies,
-                         fail_on_response_failure):
+                         fail_on_response_failure,
+                         output_file: str):
     prompts = []
     responses = []
     naive_hf_lens = []
@@ -209,6 +210,23 @@ def calculate_throughput(queries,
     print(f'expected_response_lens {list(sorted(expected_response_lens))}')
     if ray_gen_lens:
         print(f'ray_gen_lens {list(sorted(ray_gen_lens))}')
+
+    # Print prompts and responses to file
+    if output_file:
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(f"--- Benchmark Results: {len(queries)} requests ---\n\n")
+            for i, (prompt, response_dict) in enumerate(queries):
+                
+                # The generated text is in the response dictionary
+                generated_text = response_dict.get('generated_text', 'N/A')
+                
+                f.write(f"----- Request {i+1} -----\n")
+                f.write(f"Prompt: {prompt}\n")
+                f.write(f"Output: {generated_text}\n\n")
+
+        print(f"\nSuccessfully wrote prompts and outputs to {output_file}")
+    else:
+        print(f"\nPrompts and outputs are discarded. Set --output_file to print them.")
 
     prompt_token_count = sum(prompt_lens)
     response_token_count = sum(response_lens)
@@ -455,6 +473,7 @@ async def benchmark(
     coefficient_variation: float,
     log_latencies: bool,
     fail_on_response_failure: bool,
+    output_file: str,
 ):
 
     if backend == GenerationBackend.vLLM:
@@ -510,7 +529,8 @@ async def benchmark(
                                       m._decode_token_latencies,
                                       m._request_lens,
                                       log_latencies,
-                                      fail_on_response_failure)
+                                      fail_on_response_failure,
+                                      output_file)
     calculate_cdf(m._request_latencies)
     plot_latency_cdf(m._request_latencies, m._prefill_token_latencies, m._decode_token_latencies, log_filename)
     save_all_decode_token_latencies_npy(m._all_token_latencies, log_filename)
@@ -743,6 +763,8 @@ def main():
 
     parser.add_argument('--enable_migration', type=int ,default=0)
     parser.add_argument('--priority_ratio', type=float ,default=0.0)
+    parser.add_argument('--output_file', type=str, default=None,
+                        help="Path to a file to save the prompts and generated outputs.")
 
     args = parser.parse_args()
 
@@ -830,6 +852,7 @@ def main():
         args.coefficient_variation,
         args.log_latencies,
         args.fail_on_response_failure,
+        args.output_file
     ))
 
     file_name = os.path.splitext(args.log_filename)[0] + "_latency_info.json"
