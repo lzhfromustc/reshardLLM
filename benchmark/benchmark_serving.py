@@ -644,18 +644,27 @@ def sample_sharegpt_requests(
     max_seqlen:int,
 ):
     # Load the dataset.
+    # Limitations: Always uses the first X lines in the benchmark and then randomly select X lines in those X lines as the prompts, which leads to duplication and only the head of benchmark is used
+        # Filters prompts whose token exceeds max_seqlen (8192) or conversation is less than 2
+        # Only uses the first prompt in each conversation, while the benchmark has many prompts (and outputs) in each conversation
+
     prompts = []
     prompt_lens = []
     response_lens = []
     with open(dataset_path) as f:
         for line in f:
             data = json.loads(line)
-            if len(data["conversations"]) >= 2:
+            len_conversations = len(data["conversations"]) 
+            # Each line is a conversation, which contains multiple ("from":"human/gpt","value":"...") tuples
+            # Odd tuples are from humand and even tuples are from gpt
+            # Code below only uses the first tuple in each line
+            if len_conversations >= 2:
                 prompt = data["conversations"][0]["value"]
                 res = data["conversations"][1]["value"]
                 prompt_token_ids = tokenizer(prompt).input_ids
                 completion_token_ids = tokenizer(res).input_ids
-                if len(prompt_token_ids) + len(completion_token_ids) < max_seqlen and \
+                len_prompt_completion_ids = len(prompt_token_ids) + len(completion_token_ids)
+                if len_prompt_completion_ids < max_seqlen and \
                     len(prompt_token_ids) > 0 and len(completion_token_ids) > 0:
                     prompts.append(prompt)
                     prompt_lens.append(len(prompt_token_ids))
@@ -664,10 +673,36 @@ def sample_sharegpt_requests(
                 break
     sampled_ids = [random.randint(0, len(prompts) - 1) for _ in range(num_requests)]
     sampled_prompts = [prompts[idx] for idx in sampled_ids]
+    print(f"Number of duplicate prompts: {count_duplicates(prompts)}")
     sampled_prompt_lens = [prompt_lens[idx] for idx in sampled_ids]
     sampled_response_lens = [response_lens[idx] for idx in sampled_ids]
     # print(f"max len:{max(a+b for a,b in zip(prompt_lens, response_lens))}")
     return sampled_prompts, sampled_prompt_lens, sampled_response_lens
+
+def count_duplicates(data: list[str]) -> int:
+    if not data:
+        return 0
+
+    counts = {}
+    # Count the occurrences of each string
+    for item in data:
+        counts[item] = counts.get(item, 0) + 1
+
+    duplicate_count = 0
+    for item in counts:
+        if counts[item] > 1:
+            # If an item appears N times, it is duplicated N-1 times
+            duplicate_count += counts[item] - 1
+        
+    
+    duplicate_count2 = 0
+    for item in counts:
+        duplicate_count2 += counts[item] - 1
+        
+    if duplicate_count2 != duplicate_count:
+        print(f"Warning: count1 is not equal to count2: {duplicate_count} and {duplicate_count2}!")
+            
+    return duplicate_count
 
 def sample_burstgpt_request(
     dataset_path: str,

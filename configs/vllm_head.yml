@@ -1,8 +1,8 @@
 # The field, once set to True in the config file, cannot be set to False via command-line arguments.
 
 SERVER:
-  HOST: '0.0.0.0' #127.0.0.1 for localhost. 0.0.0.0 for all network interfaces.
-  PORT: 8000
+  HOST: '7.0.2.0' #127.0.0.1 for localhost. 0.0.0.0 for all network interfaces. However, seems HOST and PORT here have no impact
+  PORT: 8111
   REQUEST_OUTPUT_QUEUE_TYPE: "zmq"
   RAY_CLUSTER_PORT: 6379
   LAUNCH_RAY_CLUSTER: False
