@@ -188,3 +188,7 @@ _build/
 
 # some tmp results
 **/tmp-results/
+*.png
+benchmark/*.txt
+benchmark/*.json
+benchmark/*.npy
