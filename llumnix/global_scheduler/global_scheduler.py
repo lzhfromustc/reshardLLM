@@ -33,6 +33,18 @@ from llumnix.utils import RequestIDType, asyncio_wait_for_with_timeout, log_inst
 
 logger = init_logger(__name__)
 
+_debugpy_started = False
+
+def attach_debugpy_once(port: int):
+    if getattr(attach_debugpy_once, "already_attached", False):
+        return
+    import debugpy
+    debugpy.listen(("0.0.0.0", port))
+    logger.info("Waiting for debugpy attach at port {}...".format(port))
+    debugpy.wait_for_client()
+    logger.info("debugpy attached at port {}".format(port))
+    attach_debugpy_once.already_attached = True
+
 
 class GlobalScheduler:
     def __init__(self, global_scheduler_config: GlobalSchedulerConfig) -> None:
@@ -96,13 +108,14 @@ class GlobalScheduler:
                                    addition_dispatch_info: Dict[str, str]):
         if not self._enable_pd():
             # when enable_pd_disagg is False, prefill_instance_id and decode_instance_id are the same
-            logger.info("dispath request {} to instance {}.".format(request_id, prefill_instance_id))
+            # attach_debugpy_once(5678)
+            logger.info("(no pd2) dispatch request {} to instance {}.".format(request_id, prefill_instance_id))
         else:
             if self.global_scheduler_config.enable_pd_disagg:
-                logger.info("dispath request {} to {} instance ({}), expected_steps: {}.".format(
+                logger.info("dispatch request {} to {} instance ({}), expected_steps: {}.".format(
                     request_id, self.instance_info[prefill_instance_id].instance_type, prefill_instance_id, expected_steps))
             else:
-                logger.info("dispath request {} to {} instance ({}) for prefill, {} instance ({}) for decode, addition_dispatch_info: {}.".format(
+                logger.info("dispatch request {} to {} instance ({}) for prefill, {} instance ({}) for decode, addition_dispatch_info: {}.".format(
                     request_id, self.instance_info[prefill_instance_id].instance_type, prefill_instance_id,
                     self.instance_info[decode_instance_id].instance_type, decode_instance_id, addition_dispatch_info))
 

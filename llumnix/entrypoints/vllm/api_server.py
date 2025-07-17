@@ -195,6 +195,8 @@ if __name__ == "__main__":
     parser.add_argument("--ssl-keyfile", type=str)
     parser.add_argument("--ssl-certfile", type=str)
     parser.add_argument("--server-log-level", type=str, choices=['debug', 'info', 'warning', 'error'])
+    parser.add_argument("--head-node", type=int, help="Whether this node is the head node (1 for head, 0 for worker)")
+    parser.add_argument("--head-node-ip", type=str, help="IP address of the head node")
     parser = add_cli_args(parser)
     cli_args = parser.parse_args()
     llumnix_config = get_llumnix_config(cli_args.config_file, args=cli_args)
@@ -205,7 +207,7 @@ if __name__ == "__main__":
     vllm_engine_args: VLLMEngineArgs = VLLMEngineArgs(engine_args, backend_type)
 
     # Launch or connect to the ray cluster for multi-node serving.
-    setup_ray_cluster(entrypoints_args)
+    setup_ray_cluster(entrypoints_args, head_node=cli_args.head_node, head_node_ip=cli_args.head_node_ip)
 
     # if gpu is not available, it means that this node is head pod without any llumnix components.
     if is_gpu_available():

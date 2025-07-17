@@ -40,8 +40,7 @@ from llumnix.scaler import Scaler
 logger = init_logger(__name__)
 
 
-def launch_ray_cluster(port: int) -> subprocess.CompletedProcess:
-    head_node_ip = llumnix_envs.HEAD_NODE_IP
+def launch_ray_cluster(port: int, head_node: int, head_node_ip: str) -> subprocess.CompletedProcess:
     node_ip_address = get_ip_address()
     try:
         # Stop the existing ray processes on the node first.
@@ -52,12 +51,12 @@ def launch_ray_cluster(port: int) -> subprocess.CompletedProcess:
         else:
             logger.error("'ray stop' failed, unexpected exeption: {}.".format(e))
         sys.exit(1)
-    # Need to specify the head node ip through environment variable currently.
+    # Need to specify the head node ip through argument now.
     if head_node_ip is None:
-        logger.error("Environment variable 'HEAD_NODE_IP' should be set for ray cluster launch.")
+        logger.error("Argument 'head_node_ip' should be set for ray cluster launch.")
         sys.exit(1)
     ray_start_command = None
-    if llumnix_envs.HEAD_NODE:
+    if head_node:
         ray_start_command = f"ray start --head --node-ip-address={node_ip_address} --port={port}"
         try:
             result = subprocess.run(['ray', 'start', '--head', f'--port={port}'],
@@ -102,10 +101,10 @@ def connect_to_ray_cluster(head_node_ip: str = None,
         ray.init(ignore_reinit_error=True, namespace=namespace, log_to_driver=log_to_driver,
                  runtime_env={"env_vars": get_llumnix_env_vars()})
 
-def setup_ray_cluster(entrypoints_args) -> None:
+def setup_ray_cluster(entrypoints_args, head_node: int, head_node_ip: str) -> None:
     if entrypoints_args.launch_ray_cluster:
-        launch_ray_cluster(entrypoints_args.ray_cluster_port)
-    connect_to_ray_cluster(head_node_ip=os.getenv('HEAD_NODE_IP'),
+        launch_ray_cluster(entrypoints_args.ray_cluster_port, head_node, head_node_ip)
+    connect_to_ray_cluster(head_node_ip=head_node_ip,
                            port=entrypoints_args.ray_cluster_port,
                            namespace="llumnix",
                            log_to_driver=not entrypoints_args.disable_log_to_driver)
