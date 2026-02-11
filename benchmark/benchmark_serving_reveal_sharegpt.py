@@ -213,13 +213,22 @@ def calculate_throughput(queries,
         print(responses)
         raise
 
-    if naive_hf_lens:
-        print(f'naive_hf_lens {list(sorted(naive_hf_lens))}')
-    print(f'prompt_lens {list(sorted(prompt_lens))}')
-    print(f'response_lens {list(sorted(response_lens))}')
-    print(f'expected_response_lens {list(sorted(expected_response_lens))}')
-    if ray_gen_lens:
-        print(f'ray_gen_lens {list(sorted(ray_gen_lens))}')
+    # Disabled long array prints - uncomment below if needed for debugging
+    # if naive_hf_lens:
+    #     print(f'naive_hf_lens {list(sorted(naive_hf_lens))}')
+    # print(f'prompt_lens {list(sorted(prompt_lens))}')
+    # print(f'response_lens {list(sorted(response_lens))}')
+    # print(f'expected_response_lens {list(sorted(expected_response_lens))}')
+    # if ray_gen_lens:
+    #     print(f'ray_gen_lens {list(sorted(ray_gen_lens))}')
+    
+    # Print summary statistics instead
+    if prompt_lens:
+        print(f'prompt_lens summary: count={len(prompt_lens)}, min={min(prompt_lens)}, max={max(prompt_lens)}, median={np.median(prompt_lens):.1f}')
+    if response_lens:
+        print(f'response_lens summary: count={len(response_lens)}, min={min(response_lens)}, max={max(response_lens)}, median={np.median(response_lens):.1f}')
+    if expected_response_lens:
+        print(f'expected_response_lens summary: count={len(expected_response_lens)}, min={min(expected_response_lens)}, max={max(expected_response_lens)}, median={np.median(expected_response_lens):.1f}')
 
     # Print prompts and responses to file
     if output_file:
@@ -357,6 +366,8 @@ def plot_latency_cdf(req_latencies, prefill_latencies, decode_latencies, log_fil
 
 def plot_len_cdf(prompt_lens, response_lens, total_tokens, log_filename):
     fig_filename = os.path.splitext(log_filename)[0] + "_len.png"
+    # Close any existing figure to avoid stale data
+    plt.close('all')
     fig, (ax_prompt, ax_response, ax_total) = plt.subplots(
         1, 3, figsize=(3*7, 4.8))
 
@@ -393,14 +404,28 @@ def plot_len_cdf(prompt_lens, response_lens, total_tokens, log_filename):
         ax.set_ylabel('Cumulative Percentage(%)')
         ax.set_title(title_str)
 
-    plot_single(ax_prompt, prompt_lens, 'prompt len', 'prompt len cdf')
-    plot_single(ax_response, response_lens, 'response len', 'response len cdf')
+    # Debug: Print what we're about to plot
+    print(f'\n=== plot_len_cdf: Calculating statistics ===')
+    if prompt_lens:
+        p50_prompt = np.percentile(prompt_lens, 50)
+        print(f'Prompt P50 (median) in plot: {p50_prompt:.2f}')
+    if response_lens:
+        p50_response = np.percentile(response_lens, 50)
+        print(f'Response P50 (median) in plot: {p50_response:.2f}')
+    if total_tokens:
+        p50_total = np.percentile(total_tokens, 50)
+        print(f'Total tokens P50 (median) in plot: {p50_total:.2f}')
+    
+    plot_single(ax_prompt, prompt_lens, 'prompt len (tokens)', 'prompt len cdf')
+    plot_single(ax_response, response_lens, 'response len (tokens)', 'response len cdf')
     plot_single(ax_total, total_tokens, 'total token', 'total token cdf')
     index1 = fig_filename.rfind('/')
     index2 = fig_filename.rfind('/', 0, index1)
     fig_filename_title = fig_filename[index2 + 1:]
     plt.suptitle(fig_filename_title, fontsize=6)
     fig.savefig(fig_filename)
+    print(f'Plot saved to: {fig_filename}')
+    plt.close(fig)  # Close the figure to free memory
 
 
 def plot_instance(log_filename_0):
@@ -761,8 +786,10 @@ def sample_sharegpt_requests(
             total_prompt_lengths.append(total_human_prompts_tokens)
             total_output_lengths.append(total_gpt_outputs_tokens)
 
-            prompt = data["conversations"][0]["value"]
-            res = data["conversations"][1]["value"]
+            # NOTE: Only using the FIRST prompt and FIRST output from each conversation
+            # This means multi-turn conversations are reduced to single-turn for benchmarking
+            prompt = data["conversations"][0]["value"]  # First human prompt (index 0)
+            res = data["conversations"][1]["value"]      # First GPT output (index 1)
             prompt_token_ids = tokenizer(prompt).input_ids
             completion_token_ids = tokenizer(res).input_ids
             len_prompt_completion_ids = len(
@@ -856,12 +883,16 @@ def plot_length_distributions(total_prompt_lengths, total_output_lengths, datase
     print(f"\nPrompt Length Statistics:")
     print(f"  Mean total prompt length: {mean_prompt_len:.2f} tokens")
     print(f"  Median total prompt length: {median_prompt_len:.2f} tokens")
+    print(f"  P90 total prompt length: {np.percentile(total_prompt_lengths, 90):.2f} tokens")
+    print(f"  P95 total prompt length: {np.percentile(total_prompt_lengths, 95):.2f} tokens")
     print(f"  Min total prompt length: {min(total_prompt_lengths)} tokens")
     print(f"  Max total prompt length: {max(total_prompt_lengths)} tokens")
 
     print(f"\nOutput Length Statistics:")
     print(f"  Mean total output length: {mean_output_len:.2f} tokens")
     print(f"  Median total output length: {median_output_len:.2f} tokens")
+    print(f"  P90 total output length: {np.percentile(total_output_lengths, 90):.2f} tokens")
+    print(f"  P95 total output length: {np.percentile(total_output_lengths, 95):.2f} tokens")
     print(f"  Min total output length: {min(total_output_lengths)} tokens")
     print(f"  Max total output length: {max(total_output_lengths)} tokens")
 
@@ -1207,7 +1238,6 @@ def main():
     else:
         raise ValueError("unknown prompts")
 
-    exit()
 
     if args.allow_variable_generation_length:
         response_lens = gen_random_response_lens(
@@ -1228,14 +1258,49 @@ def main():
         return
 
     if args.verbose or True:
-        print('prompt lens', sorted(list(prompt_lens)))
-        print('response lens', sorted(list(response_lens)))
+        # Disabled long array prints - uncomment below if needed for debugging
+        # print('prompt lens', sorted(list(prompt_lens)))
+        # print('response lens', sorted(list(response_lens)))
         total_tokens = []
         for i, (prompt_len, gen_len) in enumerate(zip(prompt_lens, response_lens)):
             total_tokens.append(prompt_len + gen_len)
-        print('total tokens', sorted(list(total_tokens)))
+        # print('total tokens', sorted(list(total_tokens)))
+        
+        # Print summary statistics instead
+        print(f'Prompt lens summary: count={len(prompt_lens)}, min={min(prompt_lens)}, max={max(prompt_lens)}, median={np.median(prompt_lens):.1f}')
+        print(f'Response lens summary: count={len(response_lens)}, min={min(response_lens)}, max={max(response_lens)}, median={np.median(response_lens):.1f}')
+        print(f'Total tokens summary: count={len(total_tokens)}, min={min(total_tokens)}, max={max(total_tokens)}, median={np.median(total_tokens):.1f}')
+        
+        # Count requests exceeding thresholds
+        num_prompt_over_1024 = sum(1 for pl in prompt_lens if pl > 1024)
+        num_context_over_2048 = sum(1 for tt in total_tokens if tt > 2048)
+        total_requests = len(prompt_lens)
+        print(f'Requests with prompt length > 1024 tokens: {num_prompt_over_1024} ({num_prompt_over_1024/total_requests*100:.2f}%)')
+        print(f'Requests with context length (prompt + output) > 2048 tokens: {num_context_over_2048} ({num_context_over_2048/total_requests*100:.2f}%)')
+        
+        # Print p95 values
+        if prompt_lens:
+            p95_prompt_len = np.percentile(prompt_lens, 95)
+            print(f'P95 prompt length: {p95_prompt_len:.2f} tokens')
+        if response_lens:
+            p95_response_len = np.percentile(response_lens, 95)
+            print(f'P95 output length: {p95_response_len:.2f} tokens')
+        
+        # Debug: Print statistics that will be plotted
+        print(f'\n=== Data being passed to plot_len_cdf ===')
+        print(f'Number of prompts: {len(prompt_lens)}')
+        print(f'Number of responses: {len(response_lens)}')
+        print(f'Number of total tokens: {len(total_tokens)}')
+        if prompt_lens:
+            print(f'Prompt lens stats for plot - min: {min(prompt_lens)}, max: {max(prompt_lens)}, median: {np.median(prompt_lens):.2f}, mean: {np.mean(prompt_lens):.2f}')
+        if response_lens:
+            print(f'Response lens stats for plot - min: {min(response_lens)}, max: {max(response_lens)}, median: {np.median(response_lens):.2f}, mean: {np.mean(response_lens):.2f}')
+        if total_tokens:
+            print(f'Total tokens stats for plot - min: {min(total_tokens)}, max: {max(total_tokens)}, median: {np.median(total_tokens):.2f}, mean: {np.mean(total_tokens):.2f}')
 
     plot_len_cdf(prompt_lens, response_lens, total_tokens, args.log_filename)
+    
+    exit()
 
     prompts = list(zip(prompts, prompt_lens, response_lens))
 
