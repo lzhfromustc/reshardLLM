@@ -41,73 +41,87 @@ def get_colors():
     return colors
 
 
-def get_trace_data(log_path, trace):
+def _parse_one_data_file(filepath):
+    """Parse a single .data file; return dict with QPS, Method, and metrics, or None if invalid."""
+    metrics = ['Request P99', 'Request Mean', 'Prefill P99', 'Prefill Mean', 'Decode P99', 'Decode Mean', 'Preemption Loss']
+    file_data = {}
+    with open(filepath, 'r') as f:
+        for line in f:
+            if not line.strip() or set(line.strip()) == set('-'):
+                continue
+            parts = line.split(':', 1)
+            if len(parts) != 2:
+                continue
+            key = parts[0].strip()
+            value_part = parts[1].strip()
+            if key in ['Conversation Mode', 'Processing Time']:
+                continue
+            if key in ['Trace', 'Method']:
+                file_data[key] = value_part
+            else:
+                try:
+                    file_data[key] = float(value_part)
+                except ValueError:
+                    if key not in ['QPS'] + metrics:
+                        continue
+    if 'QPS' in file_data and 'Method' in file_data and file_data['Method'] in ['Llumnix', 'All', 'All-Wait']:
+        return file_data
+    return None
+
+
+def get_trace_data(log_path, trace, use_latest=False):
     if trace == 'ShareGPT':
         log_trace_path = os.path.join(log_path, "sharegpt")
     else:
         log_trace_path = os.path.join(log_path, trace.replace('-', '_'))
 
-    # Build QPS list dynamically from data discovered
     qps_list = []
-    
     trace_data = {}
     metrics = ['Request P99', 'Request Mean', 'Prefill P99', 'Prefill Mean', 'Decode P99', 'Decode Mean', 'Preemption Loss']
-    
-    # Track which QPS values and methods we actually have data for
     available_qps = set()
     available_methods = set()
-    
+
+    # Collect all .data files with (filepath, mtime, parsed_data)
+    candidates = []
     for root, dirs, files in os.walk(log_trace_path):
         for file in files:
             if file.endswith('.data'):
                 filepath = os.path.join(root, file)
-                with open(filepath, 'r') as file:
-                    file_data = {}
-                    for line in file:
-                        # Skip separators and empty lines
-                        if not line.strip() or set(line.strip()) == set('-'):
-                            continue
-                        # Only split on the first colon to preserve timestamps like 12:18:32
-                        parts = line.split(':', 1)
-                        if len(parts) == 2:
-                            key = parts[0].strip()
-                            value_part = parts[1].strip()
-                            # Ignore non-essential headers
-                            if key in ['Conversation Mode', 'Processing Time']:
-                                continue
-                            if key in ['Trace', 'Method']:
-                                value = value_part
-                            else:
-                                try:
-                                    value = float(value_part)
-                                except ValueError:
-                                    if key not in ['QPS'] + metrics:
-                                        continue
-                                    print(f"Warning: Could not parse value '{value_part}' for key '{key}' in {filepath}")
-                                    continue
-                            file_data[key] = value
-                        else:
-                            continue
-                    
-                    if 'QPS' in file_data and 'Method' in file_data:
-                        qps = file_data['QPS']
-                        method = file_data['Method']
-                        
-                        # Only process if method is one of the expected ones
-                        if method in ['Llumnix', 'All', 'All-Wait']:
-                            available_qps.add(qps)
-                            available_methods.add(method)
-                            
-                            if qps not in trace_data:
-                                trace_data[qps] = {
-                                    'Llumnix': {m: [] for m in metrics},
-                                    'All': {m: [] for m in metrics},
-                                    'All-Wait': {m: [] for m in metrics},
-                                }
-                            
-                            for metric in metrics:
-                                if metric in file_data:
-                                    trace_data[qps][method][metric].append(file_data[metric])
+                try:
+                    file_data = _parse_one_data_file(filepath)
+                    if file_data is not None:
+                        mtime = os.path.getmtime(filepath)
+                        candidates.append((filepath, mtime, file_data))
+                except Exception as e:
+                    print(f"Warning: Could not read {filepath}: {e}")
+
+    if use_latest and candidates:
+        # use_latest=True: keep only latest run per (qps, method)
+        # For each (qps, method), keep only the entry with latest mtime
+        by_key = {}
+        for filepath, mtime, file_data in candidates:
+            qps = file_data['QPS']
+            method = file_data['Method']
+            key = (qps, method)
+            if key not in by_key or mtime > by_key[key][1]:
+                by_key[key] = (filepath, mtime, file_data)
+        candidates = list(by_key.values())
+        print(f"Using latest .data file per (QPS, method) by mtime ({len(candidates)} points).")
+
+    for filepath, mtime, file_data in candidates:
+        qps = file_data['QPS']
+        method = file_data['Method']
+        available_qps.add(qps)
+        available_methods.add(method)
+        if qps not in trace_data:
+            trace_data[qps] = {
+                'Llumnix': {m: [] for m in metrics},
+                'All': {m: [] for m in metrics},
+                'All-Wait': {m: [] for m in metrics},
+            }
+        for metric in metrics:
+            if metric in file_data:
+                trace_data[qps][method][metric].append(file_data[metric])
     
     if available_qps:
         qps_list = sorted(list(available_qps))
@@ -115,8 +129,8 @@ def get_trace_data(log_path, trace):
         # Fallback to paper defaults if no data found
         qps_list = [7.00, 7.25, 7.50, 7.75, 8.00]
     
-    print(f"Found data for QPS values: {qps_list}")
-    print(f"Found data for methods: {list(available_methods)}")
+    print(f"QPS values to plot: {qps_list}")
+    print(f"Methods: {sorted(available_methods)}")
     
     # Ensure every qps has all methods initialized
     for qps in qps_list:
@@ -130,8 +144,8 @@ def get_trace_data(log_path, trace):
     return qps_list, trace_data
 
 
-def get_figure11_data(log_path, trace):
-    qps_list, trace_data = get_trace_data(log_path, trace)
+def get_figure11_data(log_path, trace, use_latest=False):
+    qps_list, trace_data = get_trace_data(log_path, trace, use_latest=use_latest)
     # latency_dict: QPS->'Request'/'Prefill'/'Decode'/'Preemption'->[P99, Mean]
     llumnix_latency_dict = {}
     all_latency_dict = {}
@@ -263,7 +277,7 @@ def plot_one_trace(trace, axs, qps_list, llumnix_latency_dict, all_latency_dict,
         plot_one_metric(axs[i], metric_key, metric_index)
 
 
-def plot_sharegpt_only(log_path):
+def plot_sharegpt_only(log_path, use_latest=False):
     traces = ["ShareGPT"]
 
     wspace = 0.35
@@ -278,7 +292,7 @@ def plot_sharegpt_only(log_path):
 
     for trace in traces:
         try:
-            qps_list, llumnix_latency_dict, all_latency_dict, all_wait_latency_dict = get_figure11_data(log_path, trace)
+            qps_list, llumnix_latency_dict, all_latency_dict, all_wait_latency_dict = get_figure11_data(log_path, trace, use_latest=use_latest)
             
             # Check if we have any data at all
             if not qps_list:
@@ -317,6 +331,8 @@ def plot_sharegpt_only(log_path):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--log-path', default='../log', type=str)
+    parser.add_argument('--average', action='store_true',
+                        help='Average all runs per (QPS, method); default is to use only the latest run by file mtime')
     args = parser.parse_args()
 
-    plot_sharegpt_only(args.log_path)
+    plot_sharegpt_only(args.log_path, use_latest=not args.average)

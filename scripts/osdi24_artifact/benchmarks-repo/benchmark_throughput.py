@@ -194,12 +194,38 @@ async def query_model_ft(prompt, verbose, tokenizer, allow_variable_generation_l
 
             return (prompt, output)
 
-async def query_model_vllm(prompt, verbose, tokenizer, allow_variable_generation_length, total_requests, port, priority_type):
+# Optional: round-robin server index when using ip_ports (module-level for simplicity)
+_query_model_vllm_server_index = 0
+
+
+async def query_model_vllm(prompt, verbose, tokenizer, allow_variable_generation_length, total_requests, port_or_ip_ports, priority_type):
+    """port_or_ip_ports: either int (port, localhost) or list of 'host:port' strings for Llumnix."""
     prompt, prompt_len, expected_response_len, session_id = prompt
+    expected_response_len = max(int(expected_response_len), 1)
 
     timeout = aiohttp.ClientTimeout(total=4*60*60)
 
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    if isinstance(port_or_ip_ports, list):
+        # Llumnix: use /generate_benchmark (same as reshardLLM benchmark_serving.py)
+        global _query_model_vllm_server_index
+        server_id = _query_model_vllm_server_index % len(port_or_ip_ports)
+        _query_model_vllm_server_index += 1
+        host_port = port_or_ip_ports[server_id].strip()
+        url = f'http://{host_port}/generate_benchmark'
+        generate_input = {
+            "prompt": prompt,
+            "n": 1,
+            "best_of": 1,
+            "temperature": 0.0,
+            "top_k": 1,
+            "max_tokens": expected_response_len,
+            "ignore_eos": True,
+            "stream": False,
+        }
+    else:
+        port = port_or_ip_ports
+        host_port = f"localhost:{port}"
+        url = f'http://localhost:{port}/generate_v2'
         generate_input = dict(
             inputs=prompt,
             parameters=dict(
@@ -210,19 +236,16 @@ async def query_model_vllm(prompt, verbose, tokenizer, allow_variable_generation
             priority_type=priority_type
         )
 
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         if verbose:
             print('Querying model')
-        # async with session.post(f'http://localhost:{port}/generate', json=generate_input) as resp:
-        async with session.post(f'http://localhost:{port}/generate_v2', json=generate_input) as resp:
+        async with session.post(url, json=generate_input) as resp:
             if verbose:
                 print('Done')
-
             output = await resp.json()
-            # necessary for latency calc
             output['response_len'] = expected_response_len
             if verbose and 'generated_text' in output:
                 print(json.dumps(output['generated_text']))
-
             return (prompt, output)
 
 def load_prompts(prompt_file):
@@ -446,7 +469,8 @@ def plot_latency_cdf(req_latencies, prefill_latencies, decode_latencies, results
         ax.axvline(mean_value, color='black', linestyle='-', label='mean={:.2f}'.format(mean))
         ax.text(mean_value, mean_percentage, f"{mean_percentage:.2f}", va='bottom', ha='right', color='black')
         if is_prefill:
-            prefill_SLO *= 1000
+            prefill_SLO *= 1000  # convert seconds to ms to match bin_edges (latency/token in ms)
+            print(f"prefill_SLO after *1000 (ms): {prefill_SLO}, bin_edges range: [{bin_edges.min():.2f}, {bin_edges.max():.2f}]")
             prefill_SLO_value = bin_edges[:-1][np.where(bin_edges[:-1] <= prefill_SLO)][-1]
             prefill_SLO_percentage = cumsum[np.where(bin_edges[:-1] <= prefill_SLO)][-1] / np.sum(hist) * 100
             ax.axvline(prefill_SLO_value, color='gray', linestyle='-', label=f'prefill_SLO={int(prefill_SLO / 1000)}')
@@ -556,7 +580,11 @@ def plot_len_cdf(prompt_lens, response_lens, total_tokens, results_filename):
     fig.savefig(fig_filename)
 
 def plot_instance(results_filename_0):
-    df_0 = pd.read_csv(results_filename_0+"_instance.csv").sort_values(by=["timestamp"])
+    instance_csv = results_filename_0 + "_instance.csv"
+    if not os.path.isfile(instance_csv):
+        print(f"Warning: {instance_csv} not found (server may not write it); using avg_instance_num=0.0")
+        return 0.0
+    df_0 = pd.read_csv(instance_csv).sort_values(by=["timestamp"])
     timestamp_list_0 = df_0["timestamp"].to_numpy()
     instance_num_list_0 = df_0["num_instance"].to_numpy()
     time_0 = 0
@@ -627,6 +655,9 @@ class MeasureLatency:
                 self._prefill_token_latencies.append(lat_arr[0][1])
                 self._all_latencies.append(lat_arr)
                 self._decode_latencies.append(decode_latency)
+                # New Llumnix API does not return inference_time; use 0 so queuing = e2e
+                if 'inference_time' not in output:
+                    self._inference_latencies.append(0.0)
             if 'request_id' in output:
                 self._request_ids.append(output['request_id'])
 
@@ -645,7 +676,7 @@ async def benchmark(
     allow_variable_generation_length: bool,
     verbose: bool,
     results_filename: str,
-    port: int,
+    port_or_ip_ports,  # int (port) or list of "host:port" str
     distribution: str,
     qps: float,
     coefficient_variation: float,
@@ -696,10 +727,10 @@ async def benchmark(
     async for prompt, priority_type in async_prompts:
         if priority_type == 0:
             tasks.append(asyncio.create_task(query_model(
-                prompt, verbose, tokenizer, allow_variable_generation_length, total_requests, port, 0)))
+                prompt, verbose, tokenizer, allow_variable_generation_length, total_requests, port_or_ip_ports, 0)))
         else:
             tasks1.append(asyncio.create_task(query_model1(
-                prompt, verbose, tokenizer, allow_variable_generation_length, total_requests, port, 1)))
+                prompt, verbose, tokenizer, allow_variable_generation_length, total_requests, port_or_ip_ports, 1)))
 
     queries = await asyncio.gather(*tasks)
     queries1 = await asyncio.gather(*tasks1)
@@ -856,22 +887,22 @@ def sample_dataset_requests(
             if not line:
                 continue
             try:
-            data = json.loads(line)
+                data = json.loads(line)
             except json.JSONDecodeError:
                 print("Warning: skipping malformed JSON line in dataset")
                 continue
             conversation_count += 1
-            
+
             if len(data["conversations"]) >= 2:
                 if conversation_mode == "first":
                     # Original behavior: only use first human prompt and first AI response
-                prompts.append(data["conversations"][0]["value"])
-                completions.append(data["conversations"][1]["value"])
-                prompt_token_ids = tokenizer(prompts[-1]).input_ids
-                completion_token_ids = tokenizer(completions[-1]).input_ids
-                if len(prompt_token_ids) + len(completion_token_ids) < 12800:
-                    prompt_lens.append(len(prompt_token_ids))
-                    response_lens.append(len(completion_token_ids))
+                    prompts.append(data["conversations"][0]["value"])
+                    completions.append(data["conversations"][1]["value"])
+                    prompt_token_ids = tokenizer(prompts[-1]).input_ids
+                    completion_token_ids = tokenizer(completions[-1]).input_ids
+                    if len(prompt_token_ids) + len(completion_token_ids) < 12800:
+                        prompt_lens.append(len(prompt_token_ids))
+                        response_lens.append(len(completion_token_ids))
                         total_prompts_extracted += 1
                 elif conversation_mode in ["all", "all-wait"]:
                     # Concatenate all human prompts and all AI responses into single pairs
@@ -917,7 +948,7 @@ def sample_dataset_requests(
                             
                             # Check if we have enough requests
                             if len(prompts) >= num_requests:
-                break
+                                break
 
             # Check if we have enough requests
             if len(prompts) >= num_requests:
@@ -1009,7 +1040,7 @@ async def benchmark_all_wait(
     conversations,  # List[List[(prompt_text, prompt_len, response_len)]]
     verbose: bool,
     results_filename: str,
-    port: int,
+    port_or_ip_ports,  # int (port) or list of "host:port"
     distribution: str,
     qps: float,
     coefficient_variation: float,
@@ -1041,7 +1072,7 @@ async def benchmark_all_wait(
             item = (prompt_text, prompt_len, resp_len, session_id)
             # Always priority_type 0 for now
             tasks_local.append(asyncio.create_task(query_model(
-                item, verbose, tokenizer, allow_variable_generation_length=False, total_requests=len(conv_turns), port=port, priority_type=0)))
+                item, verbose, tokenizer, allow_variable_generation_length=False, total_requests=len(conv_turns), port_or_ip_ports=port_or_ip_ports, priority_type=0)))
             # Wait for this turn to complete to get its measured response_len (we stored expected)
             prompt, output = await tasks_local[-1]
             # Simulated human reading time based on response len (tokens)
@@ -1110,7 +1141,9 @@ def main():
     parser.add_argument('--backend', type=GenerationBackend,
                         choices=[e.name for e in GenerationBackend], required=True)
     parser.add_argument('--results_filename', type=str, default='log')
-    parser.add_argument('--port', type=int, required=True)
+    parser.add_argument('--port', type=int, default=None, help='Single port (localhost). Ignored if --ip_ports set.')
+    parser.add_argument('--ip_ports', type=str, default=None,
+                        help='Comma-separated list of host:port for Llumnix (e.g. 172.31.9.153:8000). Uses /generate_benchmark.')
     parser.add_argument('--random_prompt_lens_mean', type=int)
     parser.add_argument('--random_prompt_lens_range', type=int)
     parser.add_argument('--variable_prompt_lens_distribution', choices=[
@@ -1164,10 +1197,19 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     print(tokenizer)
 
+    if args.ip_ports:
+        port_or_ip_ports = [s.strip() for s in args.ip_ports.split(",") if s.strip()]
+        if not port_or_ip_ports:
+            raise ValueError("--ip_ports must be non-empty (e.g. 172.31.9.153:8000)")
+    elif args.port is not None:
+        port_or_ip_ports = args.port
+    else:
+        raise ValueError("Provide either --port or --ip_ports")
+
     if args.prompts_filename:
         random.seed(0xCADE)
         np.random.seed(0xCADE)
-        if args.variable_response_lens_distribution=="sharegpt":
+        if args.variable_response_lens_distribution == "sharegpt":
             print(f"Using ShareGPT dataset with conversation mode: {args.conversation_mode}")
             prompts, prompt_lens, response_lens= sample_dataset_requests(args.prompts_filename, args.random_prompt_count ,tokenizer, args.conversation_mode)
             print(f"Extracted {len(prompts)} prompts from ShareGPT dataset")
@@ -1257,7 +1299,7 @@ def main():
             sampled_conversations,
             args.verbose,
             args.results_filename,
-            args.port,
+            port_or_ip_ports,
             args.distribution,
             args.qps,
             args.coefficient_variation,
@@ -1266,14 +1308,14 @@ def main():
             alpha_tokens_per_sec=4.0, # Simulate 4 tokens/sec reading time
         ))
     else:
-    throughput, prefill_token_latencies, decode_token_latencies, inference_latencies, avg_instance_num, request_latencies, request_ids, decode_latencies, request_lens = asyncio.run(benchmark(
-        backend,
-        tokenizer,
-        prompts,
-        args.allow_variable_generation_length,
-        args.verbose,
-        args.results_filename,
-        args.port,
+        throughput, prefill_token_latencies, decode_token_latencies, inference_latencies, avg_instance_num, request_latencies, request_ids, decode_latencies, request_lens = asyncio.run(benchmark(
+            backend,
+            tokenizer,
+            prompts,
+            args.allow_variable_generation_length,
+            args.verbose,
+            args.results_filename,
+            port_or_ip_ports,
         args.distribution,
         args.qps,
         args.coefficient_variation,
@@ -1281,8 +1323,8 @@ def main():
         args.fail_on_response_failure,
         args.prefill_SLO,
         args.priority_ratio,
-            args.enable_priority,
-            args.conversation_mode,
+        args.enable_priority,
+        args.conversation_mode,
     ))
 
     file_name = os.path.splitext(args.results_filename)[0] + "_latency_info.json"
@@ -1308,16 +1350,16 @@ def main():
                             "priority_decode_latencies_sum": decode_latencies[1],
                             "conversation_latencies": conversation_latencies})
         else:
-        results.append({"qps": args.qps, "cv": args.coefficient_variation,
-                        "throughput": throughput, "instance_num": avg_instance_num,
-                        "request_ids": request_ids[0], "request_lens": request_lens[0],
-                        "request_latencies": request_latencies[0], "inference_latencies": inference_latencies[0],
-                        "prefill_latencies": prefill_token_latencies[0], "decode_latencies": decode_token_latencies[0],
-                        "decode_latencies_sum": decode_latencies[0],
-                        "priority_request_ids": request_ids[1], "priority_request_lens": request_lens[1],
-                        "priority_request_latencies": request_latencies[1], "priority_inference_latencies": inference_latencies[1],
-                        "priority_prefill_latencies": prefill_token_latencies[1], "priority_decode_latencies": decode_token_latencies[1],
-                        "priority_decode_latencies_sum": decode_latencies[1]})
+            results.append({"qps": args.qps, "cv": args.coefficient_variation,
+                            "throughput": throughput, "instance_num": avg_instance_num,
+                            "request_ids": request_ids[0], "request_lens": request_lens[0],
+                            "request_latencies": request_latencies[0], "inference_latencies": inference_latencies[0],
+                            "prefill_latencies": prefill_token_latencies[0], "decode_latencies": decode_token_latencies[0],
+                            "decode_latencies_sum": decode_latencies[0],
+                            "priority_request_ids": request_ids[1], "priority_request_lens": request_lens[1],
+                            "priority_request_latencies": request_latencies[1], "priority_inference_latencies": inference_latencies[1],
+                            "priority_prefill_latencies": prefill_token_latencies[1], "priority_decode_latencies": decode_token_latencies[1],
+                            "priority_decode_latencies_sum": decode_latencies[1]})
         json.dump(results, f)
 
 

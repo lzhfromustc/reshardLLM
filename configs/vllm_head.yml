@@ -12,6 +12,9 @@ MANAGER:
   DISPATCH_POLICY: 'flood'
   ENABLE_MIGRATION: True
   ENABLE_SCALING: False
+  # Set LOG_INSTANCE_INFO: True and LOG_FILENAME to get instance CSV for GPU utilization and Fig 12 plots.
+  LOG_INSTANCE_INFO: False
+  LOG_FILENAME: 'server.log'
 
 INSTANCE:
   DISPATCH_LOAD_METRIC: 'remaining_steps'

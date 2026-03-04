@@ -5,7 +5,12 @@ import numpy as np
 import re
 import pandas as pd
 from collections import defaultdict
-from vllm.simulator.profiling import *
+
+try:
+    from vllm.simulator.profiling import ProfilingDatabase, SimParallelConfig  # type: ignore[import-untyped]
+except ImportError:
+    ProfilingDatabase = None  # type: ignore[assignment]
+    SimParallelConfig = None  # type: ignore[assignment]
 
 
 def _pad_to_alignment(x, multiple_of):
@@ -49,7 +54,7 @@ def parse_dir_name(log_filename, conversation_mode="first"):
 
     # Method based on conversation mode
     if conversation_mode == "first":
-                method = 'Llumnix'
+        method = 'Llumnix'
     elif conversation_mode == "all":
         method = 'All'
     elif conversation_mode == "all-wait":
@@ -62,35 +67,36 @@ def parse_dir_name(log_filename, conversation_mode="first"):
 
 def get_preemption_loss(log_filename):
     try:
-    df = pd.read_csv(log_filename + "_req.csv").drop_duplicates()
-    df = df.sort_values(by='timestamp')
-    preempted_request_set = set()
-    request_num = len(df["req_id"].drop_duplicates())
-    preemption_loss_sum = 0
-    last_killed_time = defaultdict(lambda: 0.0)
-    last_killed_len = defaultdict(lambda: 0.0)
+        df = pd.read_csv(log_filename + "_req.csv").drop_duplicates()
+        df = df.sort_values(by='timestamp')
+        preempted_request_set = set()
+        request_num = len(df["req_id"].drop_duplicates())
+        preemption_loss_sum = 0
+        last_killed_time = defaultdict(lambda: 0.0)
+        last_killed_len = defaultdict(lambda: 0.0)
 
-        # Try to use the profiling database, but fall back to a simpler calculation if it's not available
         try:
-    database = ProfilingDatabase("/mnt/huangziming/artifact/vllm_017/vllm/vllm/simulator/profiling_result_new.pkl", False)
-    profiling_result = database.get("llama-7b")
-    sim_parallel_config = SimParallelConfig(1, 1)
-    latency_mem = profiling_result.para_dict[sim_parallel_config]
+            if ProfilingDatabase is None or SimParallelConfig is None:
+                raise ImportError("vllm.simulator.profiling not available")
+            database = ProfilingDatabase("/mnt/huangziming/artifact/vllm_017/vllm/vllm/simulator/profiling_result_new.pkl", False)
+            profiling_result = database.get("llama-7b")
+            sim_parallel_config = SimParallelConfig(1, 1)
+            latency_mem = profiling_result.para_dict[sim_parallel_config]
 
-    for _, row in df.iterrows():
-        req_id = row["req_id"]
-        if row["event"] == "prefill" and last_killed_time[req_id]:
-            preemption_loss_sum += row["timestamp"] - last_killed_time[req_id]
-            prompt_len = last_killed_len[req_id]
-            prompt_len = _pad_to_alignment(prompt_len, 8)
-            preemption_loss_sum += (latency_mem.prefill_latency[(1, prompt_len)][0] - latency_mem.decode_latency[(8, last_killed_len[req_id])][0]) / 1000
-            preempted_request_set.add(req_id)
-        elif row["event"] == "killed":
-            last_killed_time[req_id] = row["timestamp"]
-            last_killed_len[req_id] = row["output_len"]
-            
+            for _, row in df.iterrows():
+                req_id = row["req_id"]
+                if row["event"] == "prefill" and last_killed_time[req_id]:
+                    preemption_loss_sum += row["timestamp"] - last_killed_time[req_id]
+                    prompt_len = last_killed_len[req_id]
+                    prompt_len = _pad_to_alignment(prompt_len, 8)
+                    preemption_loss_sum += (latency_mem.prefill_latency[(1, prompt_len)][0] - latency_mem.decode_latency[(8, last_killed_len[req_id])][0]) / 1000
+                    preempted_request_set.add(req_id)
+                elif row["event"] == "killed":
+                    last_killed_time[req_id] = row["timestamp"]
+                    last_killed_len[req_id] = row["output_len"]
+
             preemption_loss = preemption_loss_sum / request_num if request_num > 0 else 0
-    return preemption_loss
+            return preemption_loss
 
         except (FileNotFoundError, ImportError, Exception) as e:
             print(f"Warning: Profiling database not available ({e}), using simplified preemption loss calculation")
@@ -103,13 +109,13 @@ def get_preemption_loss(log_filename):
                 return preemption_loss
             else:
                 return 0.0
-                
+
     except Exception as e:
         print(f"Error in get_preemption_loss: {e}")
         return 0.0
 
 
-def get_evaluation_data(log_filename, conversation_mode="first"):
+def get_evaluation_data(log_filename, conversation_mode, data_file):
     # dir, json
     # trace_key, method(llumnix, infaas++, round-robin), qps
     # request/prefill/decode mean/p99, preemption loss
@@ -120,14 +126,14 @@ def get_evaluation_data(log_filename, conversation_mode="first"):
     data_file.write("Trace: {}\n".format(trace))
     data_file.write("Method: {}\n".format(method))
     data_file.write("QPS: {:.2f}\n".format(qps))
-    
+
     json_filename = os.path.splitext(log_filename)[0] + "_latency_info.json"
-    
+
     # Check if latency info file exists
     if not os.path.exists(json_filename):
         data_file.write("Error: Latency info file not found: {}\n".format(json_filename))
         return
-    
+
     # Load full JSON once to get conversation-level array if present
     try:
         with open(json_filename, 'r') as jf:
@@ -147,30 +153,38 @@ def get_evaluation_data(log_filename, conversation_mode="first"):
 
     data_keys = ['request_latencies', 'prefill_latencies', 'decode_latencies']
     key2metric = {'request_latencies': 'Request', 'prefill_latencies': 'Prefill', 'decode_latencies': 'Decode'}
-    
+
     for data_key in data_keys:
         if data_key == 'request_latencies' and conv_latencies:
             # Use conversation-level latencies for Request metrics
             mean_latency, p99_latency = get_mean_and_p99_latency(conv_latencies)
         else:
-        latencies = get_req_data(json_filename, data_key)
+            latencies = get_req_data(json_filename, data_key)
             if not latencies:
                 data_file.write("{}: No data available\n".format(key2metric[data_key]))
                 continue
-        mean_latency, p99_latency = get_mean_and_p99_latency(latencies)
+            mean_latency, p99_latency = get_mean_and_p99_latency(latencies)
         mean_metric_name = key2metric[data_key] + ' ' + 'Mean'
         p99_metric_name = key2metric[data_key] + ' ' + 'P99'
         data_file.write("{}: {:.4f}\n".format(p99_metric_name, p99_latency))
         data_file.write("{}: {:.4f}\n".format(mean_metric_name, mean_latency))
 
+    # Note when inference/queuing are not broken out (API does not return inference_time)
+    try:
+        inf = full_info[0].get('inference_latencies') if full_info else []
+        if inf is not None and len(inf) > 0 and all(x == 0 for x in inf):
+            data_file.write("Inference/Queuing: Request = e2e (API does not return inference_time)\n")
+    except Exception:
+        pass
+
     try:
         # Check if required CSV files exist for preemption loss calculation
         req_csv_filename = log_filename + "_req.csv"
         if os.path.exists(req_csv_filename):
-    preemption_loss = get_preemption_loss(log_filename)
-    data_file.write("Preemption Loss: {:.4f}".format(preemption_loss))
+            preemption_loss = get_preemption_loss(log_filename)
+            data_file.write("Preemption Loss: {:.4f}".format(preemption_loss))
         else:
-            data_file.write("Preemption Loss: No request CSV data available")
+            data_file.write("Preemption Loss: N/A (server does not write _req.csv)")
     except Exception as e:
         data_file.write("Preemption Loss: Error calculating - {}\n".format(str(e)))
 
@@ -195,7 +209,7 @@ if __name__ == '__main__':
     print(f"Processing log with conversation mode: {args.conversation_mode}")
 
     try:
-        get_evaluation_data(args.log_filename, args.conversation_mode)
+        get_evaluation_data(args.log_filename, args.conversation_mode, data_file)
     except Exception as e:
         print(e)
         data_file.write("Invalid Log!\n")

@@ -16,42 +16,42 @@
 # 3.5 3.75 4.0 4.25 4.5
 # 5x3=15 commands, 15min per command, 4h in total
 
-# bash ./llumnix_exp_dataset 'first' ./config/serving_exp_dataset 3.5 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix'
+# bash ./llumnix_exp_dataset 'first' ./config/serving_exp_dataset 3.5 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix'
 
-# bash ./llumnix_exp_dataset 'first' ./config/serving_exp_dataset 3.75 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix'
+# bash ./llumnix_exp_dataset 'first' ./config/serving_exp_dataset 3.75 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix'
 
-# bash ./llumnix_exp_dataset 'first' ./config/serving_exp_dataset 4.0 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix'
+# bash ./llumnix_exp_dataset 'first' ./config/serving_exp_dataset 4.0 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix'
 
-# bash ./llumnix_exp_dataset 'first' ./config/serving_exp_dataset 4.25 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix'
+# bash ./llumnix_exp_dataset 'first' ./config/serving_exp_dataset 4.25 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix'
 
-# bash ./llumnix_exp_dataset 'first' ./config/serving_exp_dataset 4.5 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix'
-
-
+# bash ./llumnix_exp_dataset 'first' ./config/serving_exp_dataset 4.5 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix'
 
 
 
-bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 3.5 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
 
-bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 3.75 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
+# Just run one point for testing
+# bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 3.5 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
 
-bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 4.0 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
+bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 7.5 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
 
-bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 4.25 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
+# bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 4.0 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
 
-bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 4.5 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
+# bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 4.25 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
 
-exit 0
-
-bash ./llumnix_exp_dataset 'all-wait' ./config/serving_exp_dataset 3.5 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all-wait'
-
-bash ./llumnix_exp_dataset 'all-wait' ./config/serving_exp_dataset 3.75 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all-wait'
-
-bash ./llumnix_exp_dataset 'all-wait' ./config/serving_exp_dataset 4.0 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all-wait'
-
-bash ./llumnix_exp_dataset 'all-wait' ./config/serving_exp_dataset 4.25 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all-wait'
-
-bash ./llumnix_exp_dataset 'all-wait' ./config/serving_exp_dataset 4.5 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all-wait'
-
-
+# bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 4.5 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
 
 exit 0
+
+# bash ./llumnix_exp_dataset 'all-wait' ./config/serving_exp_dataset 3.5 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix-all-wait'
+
+# bash ./llumnix_exp_dataset 'all-wait' ./config/serving_exp_dataset 3.75 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix-all-wait'
+
+# bash ./llumnix_exp_dataset 'all-wait' ./config/serving_exp_dataset 4.0 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix-all-wait'
+
+# bash ./llumnix_exp_dataset 'all-wait' ./config/serving_exp_dataset 4.25 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix-all-wait'
+
+# bash ./llumnix_exp_dataset 'all-wait' ./config/serving_exp_dataset 4.5 poisson 1.0 sharegpt './sharegpt_gpt4.jsonl' load 1 1 3 'sharegpt/Llumnix-all-wait'
+
+
+
+# exit 0

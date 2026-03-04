@@ -1,49 +1,69 @@
-# Figure 11 — ShareGPT (Serving Performance)
+# Figure 11 ShareGPT — How to run
 
-Scripts to reproduce the ShareGPT part of Figure 11 from the OSDI'24 Llumnix paper. Copied from the artifact **unchanged**; adapt config and paths for your setup (e.g. 2 machines, 1 A10G each).
+## 1. Start Llumnix on both nodes
 
-## Directory layout
+The benchmark assumes the server is already running. Start it on each node from `reshardLLM/scripts/`:
 
-- **config/** — Sourced configs: `serving_exp_dataset` (ShareGPT dataset runs), `serving_exp`, `serving_exp_test`.
-- **llumnix_exp_dataset** — Main experiment script for dataset-based runs (ShareGPT). Sources config, starts vLLM server, runs `../../benchmarks-repo/benchmark_throughput.py`, then `./plot/process_log_part_sharegpt.py`.
-- **llumnix_exp** — Used by `run.sh` for non-dataset traces (128-128, 256-256, etc.).
-- **run_part_sharegpt.sh** — Runs ShareGPT-only points (conversation_mode `all` at 5 QPS values).
-- **run.sh** — Full Figure 11 (ShareGPT, BurstGPT, 128-128, 256-256, 512-512, 128-512, 512-128).
-- **plot/** — `plot_part_sharegpt.py` (ShareGPT-only figure → `figure11_sharegpt_only.png`), `process_log_part_sharegpt.py`, plus generic `plot.py` / `process_log.py`.
+- **Head node:**
+  ```bash
+  cd /path/to/reshardLLM/reshardLLM/scripts
+  bash simple_bench.sh 0 8000 0.95
+  ```
+- **Worker node:**
+  ```bash
+  cd /path/to/reshardLLM/reshardLLM/scripts
+  bash simple_bench.sh 1 8000 0.95
+  ```
 
-## How to run (ShareGPT only)
+Set `HEAD_NODE_IP` in `simple_bench.sh` if needed. Wait until the API is ready (e.g. `curl http://<HEAD_NODE_IP>:8000/is_ready`).
 
-1. **Run from this directory** (`fig11_sharegpt/`) so `../../benchmarks-repo` points to `scripts/osdi24_artifact/benchmarks-repo/`.
+## 2. Optional: set env and dataset
 
-2. **Dataset:** Put ShareGPT data in this directory (or set paths in the commands below), e.g.:
-   - `sharegpt_gpt4_large.jsonl` or `sharegpt_gpt4.jsonl`
-   - Original artifact: e.g. `wget` from HuggingFace `shibing624/sharegpt_gpt4`.
+In **config/serving_exp_dataset** the defaults are: `HEAD_NODE_IP=172.31.9.153`, `PORT=8000`, `IP_PORTS=${HEAD_NODE_IP}:${PORT}`, and a default `MODEL_PATH`. Override if your setup differs:
 
-3. **Config:** The scripts use hardcoded paths (e.g. model at `/mnt/data/models/...`, `CUDA_VISIBLE_DEVICES=0,1,2,3`, `instance_parallel_size=8`). For 2× A10G you will need to:
-   - Adjust `config/serving_exp_dataset` (and/or env) for your model path, GPU visibility, and `instance_parallel_size`.
-   - Or set env vars / wrapper scripts that override without editing the copied scripts if you want to keep them pristine.
+```bash
+export HEAD_NODE_IP='172.31.9.153'
+export DATASET_PATH='/path/to/sharegpt_gpt4.jsonl'   # optional
+```
 
-4. **Run ShareGPT subset:**
-   ```bash
-   bash run_part_sharegpt.sh
-   ```
-   Or a single point, e.g.:
-   ```bash
-   bash ./llumnix_exp_dataset 'all' ./config/serving_exp_dataset 3.5 poisson 1.0 sharegpt './sharegpt_gpt4_large.jsonl' load 1 1 3 'sharegpt/Llumnix-all'
-   ```
+Put the ShareGPT file in `fig11_sharegpt/` (e.g. `./sharegpt_gpt4_large.jsonl`) or set `DATASET_PATH` before running.
 
-5. **Plot (after logs exist under `./log/`):**
-   ```bash
-   cd plot && python plot_part_sharegpt.py --log-path ../log
-   ```
-   (Adjust `--log-path` if your log dir is elsewhere; default is `../log`.)
+## 3. Run the experiment (single run)
 
-## Dependencies
+From **this directory** (`fig11_sharegpt/`):
 
-- Python deps used by the artifact (e.g. `vllm`, `pandas`, `matplotlib`). The plot script `process_log_part_sharegpt.py` imports `vllm.simulator.profiling`; for reshardLLM you may need the artifact’s vLLM tree or a compatible env.
-- vLLM server and benchmark client as in the original artifact.
+```bash
+cd /path/to/reshardLLM/reshardLLM/scripts/osdi24_artifact/fig11_sharegpt
+bash run_part_sharegpt.sh
+```
 
-## Reference
+This runs **one** benchmark: conversation_mode `all`, QPS 3.5, ShareGPT dataset. Logs go under `./log/...` and a `.data` file is produced for plotting.
 
-- Original: `artifact-llumnix/llumnix/artifact/63_serving_performance/`
-- Paper: Figure 11 — Serving Performance (ShareGPT trace).
+## 4. Plot (after at least one run)
+
+```bash
+cd plot && python plot_part_sharegpt.py --log-path ../log
+```
+
+By default the script uses the **latest** `.data` file (by file modification time) **for each unique (QPS, method)**. So with multiple QPS runs (e.g. 3.5, 3.75, 4.0, 4.25, 4.5), you get one point per QPS per method from its most recent run, and one figure with all those points. To **average** all runs instead:
+
+```bash
+cd plot && python plot_part_sharegpt.py --log-path ../log --average
+```
+
+Output: `figure11_sharegpt_only.png` in `plot/`.
+
+---
+
+## Output files (per run under `./log/...`)
+
+| File | Source | Description |
+|------|--------|-------------|
+| **`.log`** | Benchmark stdout (tee) | Console output: throughput, CDF, and any warnings. |
+| **`.data`** | `process_log_part_sharegpt.py` | Summary for plotting: Request/Prefill/Decode Mean & P99, Preemption Loss (or N/A). |
+| **`_latency_info.json`** | Benchmark | Per-request latencies: `request_latencies`, `prefill_latencies`, `decode_latencies`, `inference_latencies`. |
+| **`.log.npy`** | Benchmark | NumPy array of (timestamp, latency) pairs for **decode** per-token latencies; used for CDF/analysis. |
+| **`_instance.csv`** | Server (Llumnix) | Instance-level metrics (GPU usage, instance count). **Not written** by current Llumnix → benchmark uses `avg_instance_num=0` and logs a warning. |
+| **`_req.csv`** | Server (Llumnix) | Request events (prefill, killed, migrate_in, etc.) for preemption loss. **Not written** by current Llumnix → `.data` shows "Preemption Loss: N/A". |
+
+**Request latency** in `.data` is **end-to-end** (queuing + inference). If the server does not return `inference_time` in the API response, the benchmark sets `inference_latencies` to 0, so **queuing is not broken out** and Request ≈ total time in queue + compute.

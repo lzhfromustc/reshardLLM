@@ -1,19 +1,27 @@
 # OSDI'24 Llumnix artifact scripts
 
-Scripts copied from the Llumnix OSDI'24 artifact (`artifact-llumnix/llumnix/artifact/`) for reproduction. They are **unchanged** from the artifact; adapt paths and config for your environment (e.g. 2 machines × 1 A10G).
+Scripts adapted from the Llumnix OSDI'24 artifact for Figure 11 (Serving Performance) ShareGPT. They assume a **2-node** Llumnix setup (head + worker) and do **not** start the server; start Llumnix separately (e.g. with `simple_bench.sh`).
 
 ## Layout
 
-- **fig11_sharegpt/** — Figure 11 (Serving Performance) ShareGPT part: run scripts, configs, and plotting.
-- **benchmarks-repo/** — Benchmark driver used by the experiments (e.g. `benchmark_throughput.py`).
+- **fig11_sharegpt/** — Figure 11 ShareGPT: run scripts, configs, and plotting. Run commands from this directory.
+- **benchmarks-repo/** — Benchmark driver (`benchmark_throughput.py`) used by the experiments; supports `--ip_ports` and Llumnix `/generate_benchmark` API.
 
 ## Running Figure 11 ShareGPT
 
-See **fig11_sharegpt/README.md**. Run commands from **fig11_sharegpt/** so that `../../benchmarks-repo` resolves to this `benchmarks-repo/` directory.
+1. **Start Llumnix** on both nodes (see **fig11_sharegpt/README.md**).
+2. **Run the experiment** from `fig11_sharegpt/`:
+   ```bash
+   cd reshardLLM/scripts/osdi24_artifact/fig11_sharegpt
+   bash run_part_sharegpt.sh
+   ```
+3. **Plot** (after at least one run): `cd plot && python plot_part_sharegpt.py --log-path ../log`
+
+Full steps and optional env vars are in **fig11_sharegpt/README.md**.
 
 ## Dataset
 
-Obtain the ShareGPT dataset (e.g. `sharegpt_gpt4_large.jsonl` or `sharegpt_gpt4.jsonl`) as in the original artifact (e.g. HuggingFace `shibing624/sharegpt_gpt4`). Place it where your config’s `dataset_path` points (scripts use `./sharegpt_gpt4_large.jsonl` or `./sharegpt_gpt4.jsonl` by default).
+Place the ShareGPT dataset (e.g. `sharegpt_gpt4_large.jsonl` or `sharegpt_gpt4.jsonl`) in `fig11_sharegpt/` or set `DATASET_PATH`; the config uses `./sharegpt_gpt4_large.jsonl` by default.
 
 ## Original artifact
 

@@ -20,3 +20,8 @@ python benchmark_serving.py \
     --log_latencies \
     --fail_on_response_failure \
     --output_file $OUTPUT
+
+# If INSTANCE_CSV is set and the file exists, plot GPU utilization and Figure 12 (fragmentation proportion).
+if [ -n "${INSTANCE_CSV:-}" ] && [ -f "$INSTANCE_CSV" ]; then
+    python plot_instance_metrics.py --instance-csv "$INSTANCE_CSV" --output-dir .
+fi
