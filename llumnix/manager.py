@@ -576,7 +576,9 @@ class Manager:
 
     def _init_instance_info_csv(self, manager_args: ManagerArgs) -> None:
         # pylint: disable=consider-using-with
-        self.instance_info_file = open(manager_args.log_filename + '_instance.csv', 'w', encoding='utf-8')
+        csv_path = os.path.abspath(manager_args.log_filename + '_instance.csv')
+        self.instance_info_file = open(csv_path, 'w', encoding='utf-8')
+        logger.info("Instance info CSV will be written to: %s", csv_path)
         self.instance_info_csv = csv.writer(self.instance_info_file)
         self.instance_info_csv.writerow([
             'timestamp',

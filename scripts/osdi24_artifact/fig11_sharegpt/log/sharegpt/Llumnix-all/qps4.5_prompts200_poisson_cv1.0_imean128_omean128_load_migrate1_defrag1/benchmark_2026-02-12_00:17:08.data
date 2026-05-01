@@ -1,0 +1,14 @@
+Conversation Mode: all
+Processing Time: 2026-02-12 00:18:05
+--------------------------------------------------
+Trace: 128_128
+Method: All
+QPS: 4.50
+Request P99: 7.9609
+Request Mean: 5.6786
+Prefill P99: 0.2118
+Prefill Mean: 0.0544
+Decode P99: 0.0163
+Decode Mean: 0.0125
+Inference/Queuing: Request = e2e (API does not return inference_time)
+Preemption Loss: N/A (server does not write _req.csv)

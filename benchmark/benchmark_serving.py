@@ -29,7 +29,7 @@ import glob
 from scipy.stats import zipf
 from enum import Enum
 from transformers import AutoTokenizer
-from typing import List
+from typing import List, Optional
 
 
 num_finished_requests = 0
@@ -111,7 +111,15 @@ def bladellm_server_req_func(prompt, output_len):
 
     return request_dict
 
-async def inner_query_model(prompt, verbose, ip_ports, server_req_func):
+async def inner_query_model(
+    prompt,
+    verbose,
+    ip_ports,
+    server_req_func,
+    *,
+    server_api: str = "llumnix",
+    openai_model: Optional[str] = None,
+):
     prompt, prompt_len, expected_response_len = prompt
 
     # Evenly dispatch request to the given api servers.
@@ -122,21 +130,59 @@ async def inner_query_model(prompt, verbose, ip_ports, server_req_func):
     global num_finished_requests
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        request = server_req_func(prompt, expected_response_len)
         if verbose:
-            print('Querying model')
+            print("Querying model")
         try:
-            async with session.post(f'http://{ip_ports[server_id]}/generate_benchmark', json=request) as resp:
-                if verbose:
-                    print('Done')
-                output = await resp.json()
-                # necessary for latency calc
-                output['response_len'] = expected_response_len
-                if verbose and 'generated_text' in output:
-                    print(json.dumps(output['generated_text']))
-                num_finished_requests += 1
-                print("num_finised_requests: {}".format(num_finished_requests))
-                return (prompt, output)
+            if server_api == "openai":
+                model = openai_model or ""
+                url = f"http://{ip_ports[server_id]}/v1/completions"
+                body = {
+                    "model": model,
+                    "prompt": prompt,
+                    "max_tokens": max(int(expected_response_len), 1),
+                    "temperature": 0.0,
+                    "top_p": 1.0,
+                    "n": 1,
+                    "stream": False,
+                    "ignore_eos": True,
+                }
+                async with session.post(url, json=body) as resp:
+                    try:
+                        output = await resp.json()
+                    except (aiohttp.ContentTypeError, json.JSONDecodeError):
+                        output = {"detail": await resp.text()}
+                    output["response_len"] = expected_response_len
+                    if resp.status != 200:
+                        print(
+                            f"OpenAI completions failed {resp.status} from {ip_ports[server_id]}: {output}"
+                        )
+                        return (prompt, output)
+                    choices = output.get("choices") or []
+                    if not choices or "text" not in choices[0]:
+                        print(f"Bad OpenAI completions response from {ip_ports[server_id]}: {output}")
+                        return (prompt, output)
+                    output["generated_text"] = choices[0]["text"]
+            else:
+                request = server_req_func(prompt, expected_response_len)
+                async with session.post(
+                    f"http://{ip_ports[server_id]}/generate_benchmark", json=request
+                ) as resp:
+                    try:
+                        output = await resp.json()
+                    except (aiohttp.ContentTypeError, json.JSONDecodeError):
+                        output = {"detail": await resp.text()}
+                    output["response_len"] = expected_response_len
+                    if resp.status != 200 or "generated_text" not in output:
+                        print(
+                            f"generate_benchmark failed {resp.status} from {ip_ports[server_id]}: {output}"
+                        )
+                        return (prompt, output)
+
+            if verbose and "generated_text" in output:
+                print(json.dumps(output["generated_text"]))
+            num_finished_requests += 1
+            print("num_finised_requests: {}".format(num_finished_requests))
+            return (prompt, output)
         except aiohttp.ClientError as e:
             print(f"Connect to {ip_ports[server_id]} failed with: {str(e)}")
             sys.exit(1)
@@ -186,6 +232,16 @@ def calculate_throughput(queries,
             cf_gen_lens.append(response['num_output_tokens_cf'])
         if 'response_len' in response:
             expected_response_lens.append(response['response_len'])
+    if not prompts:
+        err = (
+            "No successful completions (missing generated_text). "
+            "Vanilla vLLM has no /generate_benchmark; use --server-api openai."
+        )
+        print(err)
+        if fail_on_response_failure:
+            raise RuntimeError(f"{err} successes=0 / total_requests={len(queries)}")
+        return 0.0
+
     prompt_ids = [p for p in tokenizer.batch_encode_plus(prompts)['input_ids']]
     response_ids = [r for r in tokenizer.batch_encode_plus(responses)['input_ids']]
 
@@ -290,6 +346,17 @@ def plot_latency_cdf(req_latencies, prefill_latencies, decode_latencies, log_fil
     fig, (ax_req, ax_prefill, ax_decode) = plt.subplots(1, 3, figsize=(3*7, 4.8))
 
     def plot_single(ax, latencies, is_prefill=False):
+        # Vanilla vLLM /v1/completions does not return the per-token-latency
+        # breakdown that Llumnix's /generate_benchmark provides, so prefill
+        # and decode latency lists are empty for --server-api openai.
+        # Render an empty subplot instead of crashing in np.percentile.
+        if len(latencies) == 0:
+            ax.text(0.5, 0.5,
+                    "no data\n(per-token breakdown not available\nfor vanilla vLLM /v1/completions)",
+                    ha='center', va='center', transform=ax.transAxes,
+                    fontsize=10, color='gray')
+            ax.set_ylabel('Cumulative Percentage(%)')
+            return
         hist, bin_edges = np.histogram(latencies, bins=50)
         cumsum = np.cumsum(hist)
         p50 = np.percentile(latencies, 50)
@@ -474,12 +541,24 @@ async def benchmark(
     log_latencies: bool,
     fail_on_response_failure: bool,
     output_file: str,
+    server_api: str = "llumnix",
+    openai_model: Optional[str] = None,
 ):
 
     if backend == GenerationBackend.vLLM:
-        query_model = partial(inner_query_model, server_req_func=vllm_server_req_func)
+        query_model = partial(
+            inner_query_model,
+            server_req_func=vllm_server_req_func,
+            server_api=server_api,
+            openai_model=openai_model,
+        )
     elif backend == GenerationBackend.BladeLLM:
-        query_model = partial(inner_query_model, server_req_func=bladellm_server_req_func)
+        query_model = partial(
+            inner_query_model,
+            server_req_func=bladellm_server_req_func,
+            server_api=server_api,
+            openai_model=openai_model,
+        )
     else:
         raise ValueError(f'unknown backend {backend}')
 
@@ -511,9 +590,15 @@ async def benchmark(
         tasks.append(asyncio.create_task(query_model(prompt, verbose, ip_ports)))
     queries = await asyncio.gather(*tasks)
     dur_s = time.time() - start_time
-    median_token_latency = np.median(m._per_token_latencies)
-    median_e2e_latency = np.median(m._request_latencies)
-    median_inference_latency = np.median(m._inference_latencies)
+    median_token_latency = (
+        float(np.median(m._per_token_latencies)) if m._per_token_latencies else float("nan")
+    )
+    median_e2e_latency = (
+        float(np.median(m._request_latencies)) if m._request_latencies else float("nan")
+    )
+    median_inference_latency = (
+        float(np.median(m._inference_latencies)) if m._inference_latencies else float("nan")
+    )
 
     throughput = calculate_throughput(queries,
                                       dur_s,
@@ -761,6 +846,18 @@ def main():
     parser.add_argument('-v', '--verbose', action='store_true')
     parser.add_argument('--backend', type=GenerationBackend,
                         choices=[e.name for e in GenerationBackend], default='vLLM')
+    parser.add_argument(
+        '--server-api',
+        choices=['llumnix', 'openai'],
+        default='llumnix',
+        help='llumnix: POST /generate_benchmark. openai: POST /v1/completions (vanilla vLLM server).',
+    )
+    parser.add_argument(
+        '--openai-model',
+        type=str,
+        default=None,
+        help='Model id for /v1/completions (default: same as --tokenizer).',
+    )
     parser.add_argument('--log_filename', type=str, default='benchmark.log')
     parser.add_argument('--ip_ports', nargs='+', required=True, help='List of ip:port')
     parser.add_argument('--random_prompt_lens_mean', type=int)
@@ -768,7 +865,7 @@ def main():
     parser.add_argument('--variable_prompt_lens_distribution', choices=[
                         "uniform", "exponential", "capped_exponential", "zipf"], default="uniform")
     parser.add_argument('--random_prompt_count', type=int)
-    parser.add_argument('--max_request_len', type=int, default=8192)
+    parser.add_argument('--max_request_len', type=int, default=16384)
 
     parser.add_argument(
         '--distribution', choices=["burst", "uniform", "poisson", "gamma"], default="poisson")
@@ -807,6 +904,9 @@ def main():
         assert args.random_prompt_count is not None
 
     backend = GenerationBackend[args.backend]
+    if args.server_api == "openai" and backend != GenerationBackend.vLLM:
+        print("Error: --server-api openai requires --backend vLLM", file=sys.stderr)
+        sys.exit(2)
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=args.trust_remote_code)
 
     if args.dataset_type:
@@ -887,7 +987,9 @@ def main():
         args.coefficient_variation,
         args.log_latencies,
         args.fail_on_response_failure,
-        args.output_file
+        args.output_file,
+        server_api=args.server_api,
+        openai_model=args.openai_model or args.tokenizer,
     ))
 
     file_name = os.path.splitext(args.log_filename)[0] + "_latency_info.json"
